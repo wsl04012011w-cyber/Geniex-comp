@@ -17,15 +17,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Copy official GenieX Android app
-        shell: bash
+      - name: Verify Android project
         run: |
-          set -euo pipefail
-          git clone --depth 1 --branch release https://github.com/qualcomm/ai-hub-apps.git upstream
-          cp -a upstream/geniex_chat_android/. .
-          cp upstream/LICENSE ./LICENSE
-          sed -i 's#../../LICENSE#LICENSE#g' README.md
-          rm -rf upstream
+          test -f build.gradle
+          test -f src/main/AndroidManifest.xml
+          test -f src/main/java/com/geniex/demo/DebugLogCollector.kt
 
       - name: Commit imported source
         env:
