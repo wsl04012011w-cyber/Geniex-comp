@@ -1,0 +1,69 @@
+name: Build GenieX Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout destination repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Copy official GenieX Android app
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch release https://github.com/qualcomm/ai-hub-apps.git upstream
+          cp -a upstream/geniex_chat_android/. .
+          cp upstream/LICENSE ./LICENSE
+          sed -i 's#../../LICENSE#LICENSE#g' README.md
+          rm -rf upstream
+
+      - name: Commit imported source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Import Qualcomm GenieX Android demo"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;27.3.13750724"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Build debug APK
+        run: gradle --no-daemon assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GenieX-Android-debug
+          path: build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
