@@ -11,7 +11,6 @@ import java.io.File
 class MyApplication : Application() {
     override fun onCreate() {
         super.onCreate()
-        DebugLogCollector.start(this)
         clearLegacyModelsDir()
     }
 
