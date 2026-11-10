@@ -141,11 +141,11 @@ object DebugLogCollector {
                 synchronized(lock) {
                     backupFile?.takeIf { it.exists() }?.let {
                         out.appendLine("===== PREVIOUS APP SESSION (rotated) =====")
-                        it.bufferedReader().useLines { lines -> lines.forEach(out::appendLine) }
+                        it.bufferedReader().useLines { lines -> lines.forEach { out.appendLine(it) } }
                     }
                     logFile?.takeIf { it.exists() }?.let {
                         out.appendLine("===== PERSISTED APP LOG =====")
-                        it.bufferedReader().useLines { lines -> lines.forEach(out::appendLine) }
+                        it.bufferedReader().useLines { lines -> lines.forEach { out.appendLine(it) } }
                     }
                 }
             } ?: error("Não foi possível escrever o arquivo de diagnóstico")
