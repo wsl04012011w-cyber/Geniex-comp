@@ -43,7 +43,7 @@ object DebugLogCollector {
                 active.renameTo(backupFile!!)
             }
             openWriter()
-            writeLocked("\n===== APP SESSION START Tue Nov 10 2026 23:24:56 GMT+0000 (Coordinated Universal Time) =====\n")
+            writeLocked("\n===== APP SESSION START ${Date()} =====\n")
         }
 
         installCrashHandler()
