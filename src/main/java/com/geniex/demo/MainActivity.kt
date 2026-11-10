@@ -194,6 +194,14 @@ class MainActivity : FragmentActivity() {
         btnLoadModel = findViewById(R.id.btn_load_model)
         btnUnloadModel = findViewById(R.id.btn_unload_model)
         btnStop = findViewById(R.id.btn_stop)
+        findViewById<Button>(R.id.btn_export_logs).setOnClickListener {
+            Toast.makeText(this, "Preparing diagnostic report...", Toast.LENGTH_SHORT).show()
+            Thread({
+                runCatching { DebugLogCollector.exportToDownloads(this) }
+                    .onSuccess { name -> runOnUiThread { Toast.makeText(this, "Saved to Downloads/$name", Toast.LENGTH_LONG).show() } }
+                    .onFailure { error -> runOnUiThread { Toast.makeText(this, "Log export failed: ${error.message}", Toast.LENGTH_LONG).show() } }
+            }, "GenieX-log-export").start()
+        }
         etInput = findViewById(R.id.et_input)
         btnAddImage = findViewById(R.id.btn_add_image)
 
@@ -326,8 +334,10 @@ class MainActivity : FragmentActivity() {
         nGpuLayers: Int,
         deviceId: String? = null,
     ) {
+        DebugLogCollector.record("LOAD_REQUEST model=${selectModelData.id} type=${selectModelData.type} requestedPlugin=$modelDataPluginId requestedGpuLayers=$nGpuLayers requestedDevice=$deviceId")
         modelScope.launch {
             resetLoadState()
+            DebugLogCollector.record("LOAD_STAGE resolving model paths for ${selectModelData.id}")
             val paths = ModelManagerWrapper.getPaths(selectModelData.modelName)
             if (paths == null) {
                 onLoadModelFailed("model paths unavailable — pull it first")
@@ -337,6 +347,7 @@ class MainActivity : FragmentActivity() {
             // the user's UI selection for GGUF models that skip the manifest.
             val pluginId = paths.runtime_id.ifEmpty { modelDataPluginId }
             val resolvedDeviceId = deviceId
+            DebugLogCollector.record("LOAD_STAGE paths resolved runtimeId=$pluginId modelType=${selectModelData.type} device=$resolvedDeviceId")
             when (selectModelData.type) {
                 "chat", "llm" -> {
                     // QAIRT rejects non-zero n_ctx / n_gpu_layers (both fixed at compile
@@ -353,6 +364,7 @@ class MainActivity : FragmentActivity() {
                                 enable_thinking = enableThinking,
                             )
                         }
+                    DebugLogCollector.record("LOAD_STAGE LLM builder start computeUnit=${resolvedDeviceId ?: ComputeUnitValue.NPU.value} config=$conf")
                     LlmWrapper
                         .builder()
                         .llmCreateInput(
@@ -366,10 +378,13 @@ class MainActivity : FragmentActivity() {
                             ),
                         ).build()
                         .onSuccess { wrapper ->
+                            DebugLogCollector.record("LOAD_SUCCESS LLM model=${selectModelData.id}")
                             isLoadLlmModel = true
                             llmWrapper = wrapper
                             onLoadModelSuccess("llm model loaded")
                         }.onFailure { error ->
+                            Log.e(TAG, "LLM model load failed", error)
+                            DebugLogCollector.record("LOAD_FAILURE LLM ${Log.getStackTraceString(error)}")
                             onLoadModelFailed(error.message.toString())
                         }
                 }
@@ -410,6 +425,7 @@ class MainActivity : FragmentActivity() {
                                 enable_thinking = enableThinking,
                             )
                         }
+                    DebugLogCollector.record("LOAD_STAGE VLM builder start computeUnit=${resolvedDeviceId ?: "HTP0"} config=$config")
                     VlmWrapper
                         .builder()
                         .vlmCreateInput(
@@ -423,10 +439,13 @@ class MainActivity : FragmentActivity() {
                             ),
                         ).build()
                         .onSuccess {
+                            DebugLogCollector.record("LOAD_SUCCESS VLM model=${selectModelData.id}")
                             isLoadVlmModel = true
                             vlmWrapper = it
                             onLoadModelSuccess("vlm model loaded")
                         }.onFailure { error ->
+                            Log.e(TAG, "VLM model load failed", error)
+                            DebugLogCollector.record("LOAD_FAILURE VLM ${Log.getStackTraceString(error)}")
                             onLoadModelFailed(error.message.toString())
                         }
                 }
@@ -821,6 +840,7 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun startLoadModel(selectModelData: ModelData) {
+        DebugLogCollector.record("LOAD_UI_SELECTED model=${selectModelData.id} type=${selectModelData.type} supportedBackends=${selectModelData.getSupportPluginIds()}")
         vTip.visibility = View.VISIBLE
         llLoading.visibility = View.VISIBLE
 
