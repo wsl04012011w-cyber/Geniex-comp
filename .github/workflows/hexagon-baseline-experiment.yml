@@ -35,6 +35,25 @@ jobs:
       - name: Initialize llama.cpp submodule
         run: git -C geniex submodule update --init --depth=1 third-party/llama.cpp
 
+      - name: Keep the LLM session alive between streamed turns
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path("geniex/bindings/android/app/src/main/java/com/geniex/sdk/LlmWrapper.kt")
+          content = source.read_text()
+          old = """        awaitClose {
+            close()
+        }"""
+          new = """        awaitClose {
+            // A stream is one turn, not the lifetime of the loaded model.
+            // Explicit destroy() remains owned by model unload.
+            if (handle != 0L) runCatching { llm.stopStream(handle) }
+        }"""
+          if content.count(old) != 1:
+              raise SystemExit("Expected LlmWrapper stream cleanup block was not found exactly once")
+          source.write_text(content.replace(old, new))
+          PY
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
