@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: geniex-isolated-hexagon-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-experimental-apk:
     runs-on: ubuntu-latest
@@ -196,6 +200,11 @@ jobs:
           test -f "$RUNTIME_DIR/libgeniex_plugin.so"
           test -f "$RUNTIME_DIR/libggml-hexagon.so"
           find "$RUNTIME_DIR" -maxdepth 1 -type f -name '*.so' -printf '%f\n' | sort
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
 
       - name: Build experimental Android APK
         run: |
