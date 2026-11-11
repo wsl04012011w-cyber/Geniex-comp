@@ -466,8 +466,8 @@ class MainActivity : FragmentActivity() {
                         .builder()
                         .vlmCreateInput(
                             VlmCreateInput(
-                                model_path = paths.model_path,
-                                mmproj_path = paths.mmproj_path,
+                                model_path = paths!!.model_path,
+                                mmproj_path = paths!!.mmproj_path,
                                 config = config,
                                 runtime_id = pluginId,
                                 compute_unit = resolvedDeviceId ?: ComputeUnitValue.CPU.value,
