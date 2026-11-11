@@ -8,9 +8,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: geniex-android-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
       - name: Checkout destination repository
         uses: actions/checkout@v4
@@ -37,12 +42,18 @@ jobs:
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
 
-      - name: Download CPU-only GenieX Android SDK
-        run: |
-          mkdir -p libs
-          SDK_URL="https://github.com/qualcomm/GenieX/releases/download/v0.10.0/geniex-android-aar-cpu-v0.10.0.aar"
-          curl -fL --retry 3 "$SDK_URL" -o libs/geniex-android.aar
-          echo "7b3ac1b8c49a0eec409492dc799ed1b75069d72e41311833349167ca84c71af3  libs/geniex-android.aar" | sha256sum --check --strict
+      - name: Checkout GenieX v0.10.0 SDK source
+        uses: actions/checkout@v4
+        with:
+          repository: qualcomm/GenieX
+          ref: 071f609995470bdb0e0769ab964754adfaab7e47
+          path: geniex
+          fetch-depth: 1
+          submodules: false
+          persist-credentials: false
+
+      - name: Initialize llama.cpp submodule
+        run: git -C geniex submodule update --init --depth=1 third-party/llama.cpp
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -57,7 +68,87 @@ jobs:
 
       - name: Install Android SDK components
         run: |
-          sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;27.3.13750724"
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" \
+            "platforms;android-35" "build-tools;35.0.0" \
+            "cmake;3.22.1" "ndk;27.3.13750724" "ndk;29.0.14206865"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+
+      - name: Cache Android OpenCL SDK build objects
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: geniex-android-opencl-v0.10.0-armv8a
+          restore-keys: geniex-android-opencl-v0.10.0-
+
+      - name: Build baseline-ISA GenieX SDK with OpenCL (no Hexagon / QAIRT)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .ccache
+          uid="$(id -u)"
+          gid="$(id -g)"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/geniex:/workspace" \
+            -v "$GITHUB_WORKSPACE/.ccache:/workspace/.ccache" \
+            -w /workspace \
+            -e GENIEX_VERSION=v0.10.0 \
+            -e CCACHE_DIR=/workspace/.ccache \
+            -e CCACHE_SLOPPINESS=time_macros,include_file_mtime,include_file_ctime \
+            -e HOST_UID="$uid" \
+            -e HOST_GID="$gid" \
+            --platform linux/amd64 \
+            docker.io/qualcomm/geniex-toolchain-android:v0.2.0 \
+            bash -eux -c '
+              git config --global --add safe.directory "*"
+              : "${OPENCL_SDK_ROOT:?OpenCL SDK is missing from the toolchain image}"
+              test -d "$OPENCL_SDK_ROOT"
+
+              # Baseline armv8.0 Android toolchain + OpenCL. CPU-only remains
+              # enabled only to bypass the armv8.2/armv8.7 startup guard.
+              # Hexagon and QAIRT remain disabled.
+              cmake -S sdk --preset arm64-android-cpu-release \
+                -DGENIEX_VERSION="$GENIEX_VERSION" \
+                -DGENIEX_PLUGIN_LLAMA_CPP=ON \
+                -DGENIEX_PLUGIN_QAIRT=OFF \
+                -DGENIEX_CPU_ONLY=ON \
+                -DGGML_HEXAGON=OFF \
+                -DGGML_OPENCL=ON \
+                -DGGML_OPENMP=OFF \
+                -DGENIEX_BENCHMARK=OFF \
+                -DCMAKE_PREFIX_PATH="$OPENCL_SDK_ROOT" \
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+              cmake --build sdk/build-arm64-android-cpu-release -j "$(nproc)"
+              cmake --install sdk/build-arm64-android-cpu-release --prefix sdk/pkg-geniex
+
+              test -f sdk/pkg-geniex/lib/llama_cpp/libgeniex_plugin.so
+              test -f sdk/pkg-geniex/lib/llama_cpp/libggml-opencl.so
+              if find sdk/pkg-geniex \( -name "libggml-hexagon.so" -o -name "libgeniex_plugin_qairt.so" \) | grep -q .; then
+                echo "Unexpected Hexagon/QAIRT library in the baseline OpenCL package"
+                exit 1
+              fi
+
+              chown -R "$HOST_UID:$HOST_GID" sdk .ccache
+            '
+
+      - name: Build Android AAR with OpenCL backend
+        working-directory: geniex/bindings/android
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Stage and inspect OpenCL AAR
+        run: |
+          set -euo pipefail
+          mkdir -p libs
+          cp geniex/bindings/android/app/build/outputs/aar/app-release.aar libs/geniex-android.aar
+          unzip -Z1 libs/geniex-android.aar > /tmp/geniex-aar-files.txt
+          grep -q 'jni/arm64-v8a/libgeniex_plugin_llama_cpp.so' /tmp/geniex-aar-files.txt
+          grep -q 'jni/arm64-v8a/libggml-opencl.so' /tmp/geniex-aar-files.txt
+          if grep -Eq 'libggml-hexagon.so|libgeniex_plugin_qairt.so' /tmp/geniex-aar-files.txt; then
+            echo "AAR unexpectedly contains Hexagon or QAIRT"
+            exit 1
+          fi
+          sha256sum libs/geniex-android.aar
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -67,10 +158,21 @@ jobs:
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
 
+      - name: Verify packaged GPU backend
+        run: |
+          set -euo pipefail
+          unzip -Z1 build/outputs/apk/debug/app-debug.apk > /tmp/geniex-apk-files.txt
+          grep -q 'lib/arm64-v8a/libgeniex_plugin_llama_cpp.so' /tmp/geniex-apk-files.txt
+          grep -q 'lib/arm64-v8a/libggml-opencl.so' /tmp/geniex-apk-files.txt
+          if grep -Eq 'libggml-hexagon.so|libgeniex_plugin_qairt.so' /tmp/geniex-apk-files.txt; then
+            echo "APK unexpectedly contains Hexagon or QAIRT"
+            exit 1
+          fi
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: GenieX-Android-debug
+          name: GenieX-Android-OpenCL-debug
           path: build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14

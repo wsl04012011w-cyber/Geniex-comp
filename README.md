@@ -43,13 +43,14 @@ weights to fetch separately.
    **Version 2024.3.1 or newer** is required.
 2. [Enable USB debugging](https://developer.android.com/studio/debug/dev-options) on your Android device.
 
-This fork builds with Qualcomm's **CPU-only GenieX Android AAR v0.10.0**. The
-APK intentionally exposes GGUF models on CPU only; QAIRT/NPU and OpenCL/GPU
-backends are not included. This variant avoids the ARM ISA requirements of the
-standard AAR and is intended for broader ARM64 compatibility. GitHub Actions
-downloads the official release asset and verifies its SHA-256 before building.
-For a local build, place the same verified asset at `libs/geniex-android.aar`.
-The SDK API is drop-in compatible with the app's Kotlin wrappers.
+This fork builds a custom **GenieX v0.10.0 Android AAR** targeting baseline
+ARMv8.0 with the llama.cpp **OpenCL GPU backend** enabled. Hexagon and QAIRT
+are excluded, so GGUF models can use CPU or OpenCL GPU without initializing
+the Hexagon backend that crashed on the original device. GitHub Actions builds
+the SDK and AAR from the pinned upstream source. The GPU path is still
+**device/driver-dependent**: Adreno 710 is not listed among the Android GPUs
+verified by upstream llama.cpp, so runtime support must be confirmed on the
+phone. Select CPU if OpenCL initialization or inference fails.
 
 ## Build the APK
 
@@ -75,9 +76,9 @@ The SDK API is drop-in compatible with the app's Kotlin wrappers.
 
 ## Supported Hardware
 
-- **NPU**: Qualcomm® Snapdragon® 8 Elite, Snapdragon® 8 Elite Gen 5
-- **GPU**: Qualcomm® Adreno™ GPU
-- **CPU**: ARM64-v8a
+- **CPU**: ARM64-v8a baseline
+- **GPU**: Adreno through OpenCL when the Android driver exposes a compatible implementation
+- **NPU**: not included in this baseline OpenCL build
 
 ## Technologies Used by this App
 

@@ -47,7 +47,6 @@ import androidx.fragment.app.FragmentActivity
 import androidx.recyclerview.widget.RecyclerView
 import com.geniex.demo.bean.ModelData
 import com.geniex.demo.bean.getSupportPluginIds
-import com.geniex.demo.bean.isNpuModel
 import com.geniex.demo.databinding.ActivityMainBinding
 import com.geniex.demo.databinding.DialogSelectPluginIdBinding
 import com.geniex.demo.listeners.CustomDialogInterface
@@ -392,7 +391,12 @@ class MainActivity : FragmentActivity() {
                         }.onFailure { error ->
                             Log.e(TAG, "LLM model load failed", error)
                             DebugLogCollector.record("LOAD_FAILURE LLM ${Log.getStackTraceString(error)}")
-                            onLoadModelFailed(error.message.toString())
+                            val failureMessage = if (resolvedDeviceId == ComputeUnitValue.GPU.value) {
+                                "GPU/OpenCL initialization failed: ${error.message}. Try CPU or export the debug logs."
+                            } else {
+                                error.message.toString()
+                            }
+                            onLoadModelFailed(failureMessage)
                         }
                 }
 
@@ -451,7 +455,12 @@ class MainActivity : FragmentActivity() {
                         }.onFailure { error ->
                             Log.e(TAG, "VLM model load failed", error)
                             DebugLogCollector.record("LOAD_FAILURE VLM ${Log.getStackTraceString(error)}")
-                            onLoadModelFailed(error.message.toString())
+                            val failureMessage = if (resolvedDeviceId == ComputeUnitValue.GPU.value) {
+                                "GPU/OpenCL initialization failed: ${error.message}. Try CPU or export the debug logs."
+                            } else {
+                                error.message.toString()
+                            }
+                            onLoadModelFailed(failureMessage)
                         }
                 }
 
@@ -855,9 +864,6 @@ class MainActivity : FragmentActivity() {
         var nGpuLayers = 0
         if (supportPluginIds.size > 1) {
             val dialogBinding = DialogSelectPluginIdBinding.inflate(layoutInflater)
-            val isGgufLlmModel =
-                !selectModelData.isNpuModel() &&
-                    (selectModelData.type == "chat" || selectModelData.type == "llm")
             supportPluginIds.forEach {
                 when (it) {
                     "cpu" -> {
@@ -874,9 +880,6 @@ class MainActivity : FragmentActivity() {
                         dialogBinding.rbNpu.isChecked = true
                     }
                 }
-            }
-            if (isGgufLlmModel) {
-                dialogBinding.rbNpu.visibility = View.VISIBLE
             }
             dialogBinding.rgSelectPluginId.setOnCheckedChangeListener { _, checkedId ->
                 dialogBinding.llGpuLayers.visibility =

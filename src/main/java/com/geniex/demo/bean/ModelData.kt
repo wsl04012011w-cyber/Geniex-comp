@@ -28,9 +28,9 @@ data class ModelData(
     /** "chat" / "llm" / "vlm". */
     val type: String? = null,
     /**
-     * Runtime that owns this model: `"llama_cpp"` (CPU/GPU/NPU via
-     * llama.cpp's per-tensor scheduler) or `"qairt"` (NPU-only AI Hub
-     * bundle). Drives the compute-unit picker — see [getSupportPluginIds].
+     * Runtime that owns this model: `"llama_cpp"` for GGUF models or
+     * `"qairt"` for NPU-only AI Hub bundles. This Android build exposes
+     * llama.cpp CPU and OpenCL GPU compute units.
      */
     val runtime: String? = null,
     /** Quantization hint passed to `geniex_model_pull`. */
@@ -50,8 +50,8 @@ data class ModelData(
     val chipset: String? = null,
 )
 
-/** The bundled CPU-only GenieX SDK exposes CPU inference only. */
-fun ModelData.getSupportPluginIds(): ArrayList<String> = arrayListOf("cpu")
+/** The bundled baseline-ISA GenieX SDK exposes CPU and OpenCL GPU. */
+fun ModelData.getSupportPluginIds(): ArrayList<String> = arrayListOf("cpu", "gpu")
 
 /** True when the model runs on the QAIRT NPU runtime. */
 fun ModelData.isNpuModel(): Boolean = runtime == "qairt"

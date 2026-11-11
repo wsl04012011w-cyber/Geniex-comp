@@ -18,8 +18,8 @@ android {
         applicationId 'com.geniex.demo'
         minSdk 31
         targetSdk 34
-        versionCode 1
-        versionName '1.0'
+        versionCode 2
+        versionName '1.1-opencl'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 
@@ -47,7 +47,7 @@ android {
 }
 
 dependencies {
-    // CPU-only GenieX SDK AAR (downloaded and checksum-verified by android.yml).
+    // Baseline-ISA GenieX SDK AAR with OpenCL, built from pinned v0.10.0 source by android.yml.
     implementation files('libs/geniex-android.aar')
     // The local AAR does not carry Maven transitive dependencies.
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
