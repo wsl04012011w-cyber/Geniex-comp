@@ -50,8 +50,13 @@ data class ModelData(
     val chipset: String? = null,
 )
 
-/** The bundled baseline-ISA GenieX SDK exposes CPU and OpenCL GPU. */
-fun ModelData.getSupportPluginIds(): ArrayList<String> = arrayListOf("cpu", "gpu")
+/** Text GGUF models can opt into the experimental isolated Hexagon worker. */
+fun ModelData.getSupportPluginIds(): ArrayList<String> =
+    if (type == "chat" || type == "llm") {
+        arrayListOf("cpu", "gpu", "npu")
+    } else {
+        arrayListOf("cpu", "gpu")
+    }
 
 /** True when the model runs on the QAIRT NPU runtime. */
 fun ModelData.isNpuModel(): Boolean = runtime == "qairt"
