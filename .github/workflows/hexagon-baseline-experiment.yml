@@ -72,9 +72,11 @@ jobs:
           uid="$(id -u)"
           gid="$(id -g)"
           docker run --rm \
+            -v "$GITHUB_WORKSPACE:/app" \
             -v "$GITHUB_WORKSPACE/geniex:/workspace" \
             -v "$GITHUB_WORKSPACE/.ccache:/workspace/.ccache" \
             -w /workspace \
+            -e APP_WORKSPACE=/app \
             -e GENIEX_VERSION=v0.10.0 \
             -e CCACHE_DIR=/workspace/.ccache \
             -e CCACHE_SLOPPINESS=time_macros,include_file_mtime,include_file_ctime \
@@ -124,9 +126,9 @@ jobs:
               fi
 
               # Keep the full HTP runtime private for the :npu process.
-              mkdir -p "$GITHUB_WORKSPACE/src/main/assets/npu_runtime/llama_cpp"
+              mkdir -p "$APP_WORKSPACE/src/main/assets/npu_runtime/llama_cpp"
               cp sdk/pkg-geniex-full/lib/llama_cpp/*.so \
-                "$GITHUB_WORKSPACE/src/main/assets/npu_runtime/llama_cpp/"
+                "$APP_WORKSPACE/src/main/assets/npu_runtime/llama_cpp/"
 
               # Build the regular UI-process AAR from a filtered copy. The
               # Hexagon backend and DSP-side skeleton are intentionally absent:
