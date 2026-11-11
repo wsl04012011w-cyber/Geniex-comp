@@ -129,24 +129,21 @@ class NpuWorkerClient(context: Context) {
         remote?.let { return it }
         val ready = withContext(Dispatchers.Main.immediate) {
             synchronized(lock) {
-                remote?.let {
-                    return@withContext CompletableDeferred<Messenger>().also { deferred ->
-                        deferred.complete(it)
+                val existing = remote
+                if (existing != null) {
+                    CompletableDeferred<Messenger>().also { it.complete(existing) }
+                } else {
+                    connectDeferred ?: CompletableDeferred<Messenger>().also { deferred ->
+                        connectDeferred = deferred
+                        val intent = Intent(appContext, NpuWorkerService::class.java)
+                        val didBind = appContext.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+                        bound = didBind
+                        if (!didBind) {
+                            connectDeferred = null
+                            deferred.completeExceptionally(IllegalStateException("Could not bind NPU worker service"))
+                        }
                     }
                 }
-
-                connectDeferred?.let { return@synchronized it }
-
-                val deferred = CompletableDeferred<Messenger>()
-                connectDeferred = deferred
-                val intent = Intent(appContext, NpuWorkerService::class.java)
-                val didBind = appContext.bindService(intent, connection, Context.BIND_AUTO_CREATE)
-                bound = didBind
-                if (!didBind) {
-                    connectDeferred = null
-                    deferred.completeExceptionally(IllegalStateException("Could not bind NPU worker service"))
-                }
-                deferred
             }
         }
         return withTimeout(30_000) { ready.await() }
@@ -163,7 +160,7 @@ class NpuWorkerClient(context: Context) {
                 replyTo = replyMessenger
             }
             connect().send(message)
-            val result = withTimeout(120_000) { response.await() }
+            val result = withTimeout(600_000) { response.await() }
             check(result.getBoolean(NpuWorkerService.KEY_OK)) {
                 result.getString(NpuWorkerService.KEY_DETAIL) ?: "NPU worker command failed"
             }
