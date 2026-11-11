@@ -147,11 +147,22 @@ class NpuWorkerService : Service() {
         // GGML backends from its llama_cpp subdirectory and points FastRPC at
         // that directory for the matching HTP skel.
         Os.setenv("GENIEX_PLUGIN_PATH", backendRoot.absolutePath, true)
+        val htpSearchPath = listOf(
+            backendDir.absolutePath,
+            "/vendor/lib/rfsa/adsp",
+            "/vendor/dsp/cdsp",
+            "/dsp",
+        ).joinToString(";")
         Os.setenv(
             "LD_LIBRARY_PATH",
-            "${File(backendRoot, "llama_cpp").absolutePath}:${applicationInfo.nativeLibraryDir}:/system/lib64:/vendor/lib64",
+            "${backendDir.absolutePath}:${applicationInfo.nativeLibraryDir}:/system/lib64:/vendor/lib64",
             true,
         )
+        // FastRPC resolves the HTP skeleton by basename (libggml-htp-v73.so).
+        // Keep the app-private skeleton directory first, then platform fallback paths.
+        Os.setenv("ADSP_LIBRARY_PATH", htpSearchPath, true)
+        Os.setenv("DSP_LIBRARY_PATH", htpSearchPath, true)
+        Log.i(TAG, "NPU_WORKER_DSP_PATH=$htpSearchPath")
 
         if (!pluginRegistered) {
             val registerResult = GenieXSdk.getInstance().registerPlugin(plugin.absolutePath)
