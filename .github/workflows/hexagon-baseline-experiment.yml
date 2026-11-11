@@ -1,6 +1,8 @@
 name: Experimental GenieX Hexagon baseline build
 
 on:
+  push:
+    branches: [experiment/localdream-npu-isolation]
   workflow_dispatch:
 
 permissions:
@@ -63,11 +65,8 @@ jobs:
             bash -eux -c '
               git config --global --add safe.directory "*"
 
-              # This intentionally uses the CPU toolchain preset: its Android
-              # host binaries are baseline ARMv8-A, not the ARMv8.7-A flags
-              # from the Snapdragon preset. Hexagon remains independently ON.
-              # This avoids repeating the host-ISA mismatch that can SIGILL
-              # before the HTP backend has even opened a device.
+              # Use the CPU preset only for its baseline ARMv8-A host compiler
+              # flags. GGML_HEXAGON is explicitly re-enabled below.
               OPENCL_SYSROOT="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
               OPENCL_INCLUDE_DIR="$OPENCL_SYSROOT/usr/include"
               OPENCL_LIBRARY="$OPENCL_SYSROOT/usr/lib/aarch64-linux-android/libOpenCL.so"
