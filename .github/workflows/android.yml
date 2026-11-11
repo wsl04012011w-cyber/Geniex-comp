@@ -37,6 +37,13 @@ jobs:
             git push origin "HEAD:${GITHUB_REF_NAME}"
           fi
 
+      - name: Download CPU-only GenieX Android SDK
+        run: |
+          mkdir -p libs
+          SDK_URL="https://github.com/qualcomm/GenieX/releases/download/v0.10.0/geniex-android-aar-cpu-v0.10.0.aar"
+          curl -fL --retry 3 "$SDK_URL" -o libs/geniex-android.aar
+          echo "7b3ac1b8c49a0eec409492dc799ed1b75069d72e41311833349167ca84c71af3  libs/geniex-android.aar" | sha256sum --check --strict
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
