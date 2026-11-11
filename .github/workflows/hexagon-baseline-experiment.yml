@@ -150,8 +150,8 @@ jobs:
           test -f src/main/assets/npu_runtime/llama_cpp/libgeniex_plugin.so
           test -f src/main/assets/npu_runtime/llama_cpp/libggml-hexagon.so
           test -f src/main/assets/npu_runtime/llama_cpp/libggml-htp-v73.so
-          test -f sdk/pkg-geniex/lib/llama_cpp/libggml-opencl.so
-          if find sdk/pkg-geniex/lib/llama_cpp \
+          test -f geniex/sdk/pkg-geniex/lib/llama_cpp/libggml-opencl.so
+          if find geniex/sdk/pkg-geniex/lib/llama_cpp \
             \( -name "libggml-hexagon.so" -o -name "libggml-htp-*.so" \) | grep -q .; then
             echo "Hexagon backend artifacts leaked into the UI AAR staging package"
             exit 1
