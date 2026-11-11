@@ -29,8 +29,8 @@ data class ModelData(
     val type: String? = null,
     /**
      * Runtime that owns this model: `"llama_cpp"` for GGUF models or
-     * `"qairt"` for NPU-only AI Hub bundles. This Android build exposes
-     * llama.cpp CPU and OpenCL GPU compute units.
+     * `"qairt"` for NPU-only AI Hub bundles. This build exposes llama.cpp
+     * CPU/OpenCL and an experimental isolated GGML Hexagon worker for text GGUF.
      */
     val runtime: String? = null,
     /** Quantization hint passed to `geniex_model_pull`. */
