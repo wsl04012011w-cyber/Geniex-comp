@@ -24,6 +24,7 @@ import android.provider.MediaStore
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
+import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.AdapterView
 import android.widget.Button
@@ -199,6 +200,29 @@ class MainActivity : FragmentActivity() {
         btnLoadModel = findViewById(R.id.btn_load_model)
         btnUnloadModel = findViewById(R.id.btn_unload_model)
         btnStop = findViewById(R.id.btn_stop)
+        findViewById<Button>(R.id.btn_more).setOnClickListener {
+            val actions = arrayOf(
+                "Download model",
+                "Import GGUF",
+                "Load model",
+                "Unload model",
+                "Stop generation",
+                "Export debug logs",
+            )
+            AlertDialog.Builder(this)
+                .setTitle("Actions")
+                .setItems(actions) { _, which ->
+                    when (which) {
+                        0 -> btnDownload.performClick()
+                        1 -> btnImportModel.performClick()
+                        2 -> btnLoadModel.performClick()
+                        3 -> btnUnloadModel.performClick()
+                        4 -> btnStop.performClick()
+                        5 -> findViewById<Button>(R.id.btn_export_logs).performClick()
+                    }
+                }
+                .show()
+        }
         findViewById<Button>(R.id.btn_export_logs).setOnClickListener {
             Toast.makeText(this, "Preparing diagnostic report...", Toast.LENGTH_SHORT).show()
             Thread({
@@ -213,6 +237,14 @@ class MainActivity : FragmentActivity() {
         btnSend = findViewById(R.id.btn_send)
         btnSend.isEnabled = false
         etInput.doAfterTextChanged { refreshSendButtonState() }
+        etInput.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEND) {
+                if (btnSend.isEnabled) btnSend.performClick()
+                true
+            } else {
+                false
+            }
+        }
         btnClearHistory = findViewById(R.id.btn_clear_history)
         scrollImages = findViewById(R.id.scroll_images)
         topScrollContainer = findViewById(R.id.ll_images_container)
@@ -301,9 +333,10 @@ class MainActivity : FragmentActivity() {
             if (isLoadVlmModel) {
                 btnAddImage.visibility = View.VISIBLE
             }
-            btnUnloadModel.visibility = View.VISIBLE
+            // Model actions stay inside the compact More menu.
+            btnUnloadModel.visibility = View.GONE
             llLoading.visibility = View.INVISIBLE
-            btnStop.visibility = View.VISIBLE
+            btnStop.visibility = View.GONE
             refreshSendButtonState()
         }
     }
@@ -663,7 +696,12 @@ class MainActivity : FragmentActivity() {
         btnImportModel.setOnClickListener { openGgufImporter() }
 
         btnClearHistory.setOnClickListener {
-            clearHistory()
+            AlertDialog.Builder(this)
+                .setTitle("Clear conversation?")
+                .setMessage("This clears the chat messages and attached images.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Clear") { _, _ -> clearHistory() }
+                .show()
         }
         /*
          * Step 3. download model. Cancelling the coroutine triggers the
@@ -996,17 +1034,15 @@ class MainActivity : FragmentActivity() {
                         val checkedId = dialogBinding.rgSelectPluginId.checkedRadioButtonId
                         if (checkedId == R.id.rb_gpu) {
                             if (dialogBinding.llGpuLayers.visibility == View.VISIBLE) {
-                                nGpuLayers =
-                                    dialogBinding.etGpuLayers.text
-                                        .toString()
-                                        .toInt()
-                                if (nGpuLayers == 0) {
-                                    Toast
-                                        .makeText(
-                                            this@MainActivity,
-                                            "nGpuLayers min value is 1",
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
+                                nGpuLayers = dialogBinding.etGpuLayers.text
+                                    .toString()
+                                    .toIntOrNull() ?: 0
+                                if (nGpuLayers !in 1..999) {
+                                    Toast.makeText(
+                                        this@MainActivity,
+                                        "Enter a GPU layer count from 1 to 999",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
                                     return
                                 }
                             }

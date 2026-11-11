@@ -32,7 +32,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginLeft="10dp"
-            android:text="GPU (OpenCL)"
+            android:text="GPU + CPU (OpenCL)"
             android:visibility="gone"
             tools:visibility="visible" />
 
@@ -49,7 +49,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
-        android:text="GPU uses OpenCL and depends on the device driver. CPU remains available."
+        android:text="OpenCL runs selected model layers on the GPU; remaining layers run on the CPU. Set GPU layers below."
         android:textSize="12sp" />
 
     <LinearLayout
