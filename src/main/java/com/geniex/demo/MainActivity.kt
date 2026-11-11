@@ -116,6 +116,8 @@ class MainActivity : FragmentActivity() {
 
     private var isLoadLlmModel = false
     private var isLoadVlmModel = false
+    private var isLoadLlmOnNpuWorker = false
+    private val npuWorkerClient by lazy { NpuWorkerClient(applicationContext) }
 
     /**
      * Vision geometry of the currently loaded VLM, read from its mmproj GGUF.
@@ -145,6 +147,7 @@ class MainActivity : FragmentActivity() {
     private fun resetLoadState() {
         isLoadLlmModel = false
         isLoadVlmModel = false
+        isLoadLlmOnNpuWorker = false
         // Stale geometry would size preprocessing for the previous model.
         vlmVisionConfig = null
     }
@@ -372,6 +375,22 @@ class MainActivity : FragmentActivity() {
                             )
                         }
                     DebugLogCollector.record("LOAD_STAGE LLM builder start computeUnit=${resolvedDeviceId ?: ComputeUnitValue.CPU.value} config=$conf")
+                    if (pluginId == "llama_cpp" && resolvedDeviceId == ComputeUnitValue.NPU.value) {
+                        runCatching {
+                            npuWorkerClient.loadModel(paths.model_path, paths.tokenizer_path, conf)
+                        }.onSuccess {
+                            DebugLogCollector.record("LOAD_SUCCESS LLM model=${selectModelData.id} worker_process=npu compute_unit=HTP0")
+                            isLoadLlmOnNpuWorker = true
+                            isLoadLlmModel = true
+                            onLoadModelSuccess("GGML Hexagon NPU model loaded in isolated process")
+                        }.onFailure { error ->
+                            Log.e(TAG, "Isolated Hexagon worker load failed", error)
+                            DebugLogCollector.record("LOAD_FAILURE NPU_WORKER ${Log.getStackTraceString(error)}")
+                            onLoadModelFailed("Hexagon NPU worker failed: ${error.message}. CPU and OpenCL remain available.")
+                        }
+                        return@launch
+                    }
+                    isLoadLlmOnNpuWorker = false
                     LlmWrapper
                         .builder()
                         .llmCreateInput(
@@ -747,30 +766,40 @@ class MainActivity : FragmentActivity() {
                     } else {
                         chatList.add(ChatMessage(role = "user", inputString))
                         // Apply chat template and generate
-                        llmWrapper
-                            .applyChatTemplate(
-                                chatList.toTypedArray(),
+                        if (isLoadLlmOnNpuWorker) {
+                            npuWorkerClient.generateStreamFlow(
+                                chatList.toList(),
                                 tools,
                                 enableThinking,
-                            ).onSuccess { templateOutput ->
-                                Log.d(TAG, "chat template:${templateOutput.formattedText}")
-                                llmWrapper
-                                    .generateStreamFlow(
-                                        templateOutput.formattedText,
-                                         config = GenerationConfigSample().toGenerationConfig(),
-                                    ).collect { streamResult ->
-                                        handleResult(sb, streamResult)
-                                    }
-                            }.onFailure { error ->
-                                runOnUiThread {
-                                    Toast
-                                        .makeText(
-                                            this@MainActivity,
-                                            error.message,
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
-                                }
+                            ).collect { streamResult ->
+                                handleResult(sb, streamResult)
                             }
+                        } else {
+                            llmWrapper
+                                .applyChatTemplate(
+                                    chatList.toTypedArray(),
+                                    tools,
+                                    enableThinking,
+                                ).onSuccess { templateOutput ->
+                                    Log.d(TAG, "chat template:${templateOutput.formattedText}")
+                                    llmWrapper
+                                        .generateStreamFlow(
+                                            templateOutput.formattedText,
+                                            config = GenerationConfigSample().toGenerationConfig(),
+                                        ).collect { streamResult ->
+                                            handleResult(sb, streamResult)
+                                        }
+                                }.onFailure { error ->
+                                    runOnUiThread {
+                                        Toast
+                                            .makeText(
+                                                this@MainActivity,
+                                                error.message,
+                                                Toast.LENGTH_SHORT,
+                                            ).show()
+                                    }
+                                }
+                        }
                     }
 
                     clearImages()
@@ -823,8 +852,13 @@ class MainActivity : FragmentActivity() {
                     vlmChatList.clear()
                     handleUnloadResult(0)
                 } else if (isLoadLlmModel) {
-                    llmWrapper.stopStream()
-                    llmWrapper.destroy()
+                    if (isLoadLlmOnNpuWorker) {
+                        npuWorkerClient.stopStream()
+                        npuWorkerClient.unloadModel()
+                    } else {
+                        llmWrapper.stopStream()
+                        llmWrapper.destroy()
+                    }
                     chatList.clear()
                     handleUnloadResult(0)
                 } else {
@@ -847,7 +881,11 @@ class MainActivity : FragmentActivity() {
                 if (isLoadVlmModel) {
                     vlmWrapper.stopStream()
                 } else if (isLoadLlmModel) {
-                    llmWrapper.stopStream()
+                    if (isLoadLlmOnNpuWorker) {
+                        npuWorkerClient.stopStream()
+                    } else {
+                        llmWrapper.stopStream()
+                    }
                 }
             }
         }
@@ -877,7 +915,7 @@ class MainActivity : FragmentActivity() {
 
                     "npu" -> {
                         dialogBinding.rbNpu.visibility = View.VISIBLE
-                        dialogBinding.rbNpu.isChecked = true
+                        // CPU remains the safe default; NPU is opt-in during this experiment.
                     }
                 }
             }
@@ -1124,7 +1162,7 @@ class MainActivity : FragmentActivity() {
         if (isLoadLlmModel) {
             chatList.clear()
             modelScope.launch {
-                llmWrapper.reset()
+                if (isLoadLlmOnNpuWorker) npuWorkerClient.reset() else llmWrapper.reset()
             }
         }
         if (isLoadVlmModel) {
@@ -1277,6 +1315,11 @@ class MainActivity : FragmentActivity() {
             }
             loadingMessageIndex = -1
         }
+    }
+
+    override fun onDestroy() {
+        npuWorkerClient.close()
+        super.onDestroy()
     }
 
     companion object {
