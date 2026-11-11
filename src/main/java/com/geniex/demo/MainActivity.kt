@@ -996,14 +996,12 @@ class MainActivity : FragmentActivity() {
                 removeLoadingIndicator()
                 runOnUiThread {
                     sb.append(streamResult.text)
-                    Message(sb.toString(), MessageType.ASSISTANT).let { lastMsg ->
-                        val size = messages.size
-                        messages[size - 1].let { msg ->
-                            if (msg.type != MessageType.ASSISTANT) {
-                                messages.add(lastMsg)
-                            } else {
-                                messages[size - 1] = lastMsg
-                            }
+                    Message(sb.toString(), MessageType.ASSISTANT).let { assistantMessage ->
+                        val lastIndex = messages.lastIndex
+                        if (lastIndex >= 0 && messages[lastIndex].type == MessageType.ASSISTANT) {
+                            messages[lastIndex] = assistantMessage
+                        } else {
+                            messages.add(assistantMessage)
                         }
                     }
                     adapter.notifyDataSetChanged()
@@ -1026,8 +1024,15 @@ class MainActivity : FragmentActivity() {
 
                 runOnUiThread {
                     val content = sb.toString()
-                    val size = messages.size
-                    messages[size - 1] = Message(content, MessageType.ASSISTANT)
+                    val assistantMessage = Message(content, MessageType.ASSISTANT)
+                    val lastIndex = messages.lastIndex
+                    if (lastIndex >= 0 && messages[lastIndex].type == MessageType.ASSISTANT) {
+                        messages[lastIndex] = assistantMessage
+                    } else {
+                        // A stream can finish after the chat was cleared or its placeholder removed.
+                        // Never index -1 or overwrite the user's last input.
+                        messages.add(assistantMessage)
+                    }
 
                     val ttft = String.format(Locale.US, "%.2f", streamResult.profile.ttftMs)
                     val promptTokens = streamResult.profile.promptTokens
@@ -1159,6 +1164,13 @@ class MainActivity : FragmentActivity() {
         }
 
     private fun clearHistory() {
+        // Resetting the native context while decode is active races the backend.
+        // Stop generation first so clear cannot destabilize CPU, GPU or NPU.
+        if (isGenerating) {
+            Toast.makeText(this, "Stop generation before clearing history", Toast.LENGTH_SHORT).show()
+            return
+        }
+        loadingMessageIndex = -1
         if (isLoadLlmModel) {
             chatList.clear()
             modelScope.launch {
@@ -1290,7 +1302,9 @@ class MainActivity : FragmentActivity() {
 
     private fun reloadRecycleView() {
         adapter.notifyDataSetChanged()
-        binding.rvChat.scrollToPosition(messages.size - 1)
+        if (messages.isNotEmpty()) {
+            binding.rvChat.scrollToPosition(messages.lastIndex)
+        }
     }
 
     private fun showLoadingIndicator() {
