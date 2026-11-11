@@ -2,7 +2,7 @@ name: Build GenieX Android APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, experiment/chat-ui-gpu-acceleration]
   workflow_dispatch:
 
 permissions:
