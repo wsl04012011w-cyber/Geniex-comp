@@ -100,8 +100,14 @@ jobs:
             docker.io/qualcomm/geniex-toolchain-android:v0.2.0 \
             bash -eux -c '
               git config --global --add safe.directory "*"
-              : "${OPENCL_SDK_ROOT:?OpenCL SDK is missing from the toolchain image}"
-              test -d "$OPENCL_SDK_ROOT"
+              # The Android toolchain image installs Khronos OpenCL headers
+              # and the ICD loader directly into the NDK sysroot; unlike its
+              # Linux image it does not export OPENCL_SDK_ROOT.
+              OPENCL_SYSROOT="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+              OPENCL_INCLUDE_DIR="$OPENCL_SYSROOT/usr/include"
+              OPENCL_LIBRARY="$OPENCL_SYSROOT/usr/lib/aarch64-linux-android/libOpenCL.so"
+              test -f "$OPENCL_INCLUDE_DIR/CL/cl.h"
+              test -f "$OPENCL_LIBRARY"
 
               # Baseline armv8.0 Android toolchain + OpenCL. CPU-only remains
               # enabled only to bypass the armv8.2/armv8.7 startup guard.
@@ -115,7 +121,8 @@ jobs:
                 -DGGML_OPENCL=ON \
                 -DGGML_OPENMP=OFF \
                 -DGENIEX_BENCHMARK=OFF \
-                -DCMAKE_PREFIX_PATH="$OPENCL_SDK_ROOT" \
+                -DOpenCL_INCLUDE_DIR="$OPENCL_INCLUDE_DIR" \
+                -DOpenCL_LIBRARY="$OPENCL_LIBRARY" \
                 -DCMAKE_C_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
