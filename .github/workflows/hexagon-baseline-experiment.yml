@@ -37,7 +37,7 @@ jobs:
 
       - name: Keep the LLM session alive between streamed turns
         run: |
-          python3 -c 'from pathlib import Path; p=Path("geniex/bindings/android/app/src/main/java/com/geniex/sdk/LlmWrapper.kt"); s=p.read_text(); old="        awaitClose {\\n            close()\\n        }"; new="        awaitClose {\\n            if (handle != 0L) runCatching { llm.stopStream(handle) }\\n        }"; assert s.count(old) == 1, "LlmWrapper cleanup block mismatch"; p.write_text(s.replace(old, new))'
+          python3 -c 'from pathlib import Path; p=Path("geniex/bindings/android/app/src/main/java/com/geniex/sdk/LlmWrapper.kt"); s=p.read_text(); nl=chr(10); old="        awaitClose {" + nl + "            close()" + nl + "        }"; new="        awaitClose {" + nl + "            if (handle != 0L) runCatching { llm.stopStream(handle) }" + nl + "        }"; assert s.count(old) == 1, "LlmWrapper cleanup block mismatch"; p.write_text(s.replace(old, new))'
 
       - name: Set up Java
         uses: actions/setup-java@v4
