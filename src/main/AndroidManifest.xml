@@ -24,6 +24,12 @@
             android:name=".activity.FileContentActivity"
             android:exported="false" />
 
+        <!-- GGML Hexagon is loaded only here; a native crash cannot terminate the chat UI process. -->
+        <service
+            android:name=".NpuWorkerService"
+            android:exported="false"
+            android:process=":npu" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
