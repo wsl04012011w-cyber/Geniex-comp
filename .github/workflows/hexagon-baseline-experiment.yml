@@ -64,7 +64,7 @@ jobs:
           key: geniex-android-opencl-hexagon-v0.10.0-armv8a
           restore-keys: geniex-android-opencl-hexagon-v0.10.0-
 
-      - name: Build baseline ARMv8-A CPU/OpenCL SDK
+      - name: Build baseline ARMv8-A GGML Hexagon + OpenCL SDK
         shell: bash
         run: |
           set -euo pipefail
@@ -89,80 +89,10 @@ jobs:
               OPENCL_LIBRARY="$OPENCL_SYSROOT/usr/lib/aarch64-linux-android/libOpenCL.so"
               test -f "$OPENCL_INCLUDE_DIR/CL/cl.h"
               test -f "$OPENCL_LIBRARY"
-
-              cmake -S sdk --preset arm64-android-cpu-release \
-                -DGENIEX_VERSION="$GENIEX_VERSION" \
-                -DGENIEX_PLUGIN_LLAMA_CPP=ON \
-                -DGENIEX_PLUGIN_QAIRT=OFF \
-                -DGENIEX_CPU_ONLY=ON \
-                -DGGML_HEXAGON=OFF \
-                -DGGML_OPENCL=ON \
-                -DGGML_OPENMP=OFF \
-                -DGENIEX_BENCHMARK=OFF \
-                -DOpenCL_INCLUDE_DIR="$OPENCL_INCLUDE_DIR" \
-                -DOpenCL_LIBRARY="$OPENCL_LIBRARY" \
-                -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-
-              cmake --build sdk/build-arm64-android-cpu-release -j "$(nproc)"
-              rm -rf sdk/pkg-geniex
-              cmake --install sdk/build-arm64-android-cpu-release --prefix sdk/pkg-geniex
-              test -f sdk/pkg-geniex/lib/llama_cpp/libgeniex_plugin.so
-              test -f sdk/pkg-geniex/lib/llama_cpp/libggml-opencl.so
-              if find sdk/pkg-geniex -name "libggml-hexagon.so" | grep -q .; then
-                echo "Main CPU/OpenCL package must not contain the Hexagon backend"
-                exit 1
-              fi
-              chown -R "$HOST_UID:$HOST_GID" sdk .ccache
-            '
-
-      - name: Build the app's baseline CPU/OpenCL AAR
-        working-directory: geniex/bindings/android
-        run: ./gradlew --no-daemon clean assembleRelease
-
-      - name: Stage baseline AAR for the app
-        run: |
-          set -euo pipefail
-          mkdir -p libs artifacts
-          cp geniex/bindings/android/app/build/outputs/aar/app-release.aar libs/geniex-android.aar
-          cp libs/geniex-android.aar artifacts/GenieX-Android-CPU-OpenCL.aar
-          unzip -Z1 libs/geniex-android.aar > /tmp/geniex-main-aar.txt
-          grep -q 'jni/arm64-v8a/libgeniex_plugin_llama_cpp.so' /tmp/geniex-main-aar.txt
-          grep -q 'jni/arm64-v8a/libggml-opencl.so' /tmp/geniex-main-aar.txt
-          if grep -Eq 'libggml-hexagon.so|libgeniex_plugin_qairt.so' /tmp/geniex-main-aar.txt; then
-            echo "The UI-process AAR must not contain Hexagon or QAIRT"
-            exit 1
-          fi
-
-      - name: Build separate baseline-ISA GGML Hexagon SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          uid="$(id -u)"
-          gid="$(id -g)"
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/geniex:/workspace" \
-            -v "$GITHUB_WORKSPACE/.ccache:/workspace/.ccache" \
-            -w /workspace \
-            -e GENIEX_VERSION=v0.10.0 \
-            -e CCACHE_DIR=/workspace/.ccache \
-            -e CCACHE_SLOPPINESS=time_macros,include_file_mtime,include_file_ctime \
-            -e HOST_UID="$uid" \
-            -e HOST_GID="$gid" \
-            --platform linux/amd64 \
-            docker.io/qualcomm/geniex-toolchain-android:v0.2.0 \
-            bash -eux -c '
-              git config --global --add safe.directory "*"
-              OPENCL_SYSROOT="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
-              OPENCL_INCLUDE_DIR="$OPENCL_SYSROOT/usr/include"
-              OPENCL_LIBRARY="$OPENCL_SYSROOT/usr/lib/aarch64-linux-android/libOpenCL.so"
-              test -f "$OPENCL_INCLUDE_DIR/CL/cl.h"
-              test -f "$OPENCL_LIBRARY"
               : "${HEXAGON_SDK_ROOT:?Hexagon SDK missing from toolchain image}"
               : "${HEXAGON_TOOLS_ROOT:?Hexagon tools missing from toolchain image}"
 
-              # Reuse the baseline ARMv8-A Android toolchain, but enable HTP
-              # independently. No ARMv8.7 host instructions are required.
+              # Use the baseline ARMv8-A host toolchain but enable HTP separately.
               cmake -S sdk --preset arm64-android-cpu-release \
                 -B sdk/build-arm64-android-hexagon-baseline \
                 -DGENIEX_VERSION="$GENIEX_VERSION" \
@@ -182,28 +112,66 @@ jobs:
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
               cmake --build sdk/build-arm64-android-hexagon-baseline -j "$(nproc)"
-              rm -rf sdk/pkg-geniex-hexagon
-              cmake --install sdk/build-arm64-android-hexagon-baseline --prefix sdk/pkg-geniex-hexagon
-              test -f sdk/pkg-geniex-hexagon/lib/llama_cpp/libgeniex_plugin.so
-              test -f sdk/pkg-geniex-hexagon/lib/llama_cpp/libggml-hexagon.so
-              test -f sdk/pkg-geniex-hexagon/lib/llama_cpp/libggml-opencl.so
-              if find sdk/pkg-geniex-hexagon -name "libgeniex_plugin_qairt.so" | grep -q .; then
+              rm -rf sdk/pkg-geniex-full sdk/pkg-geniex
+              cmake --install sdk/build-arm64-android-hexagon-baseline --prefix sdk/pkg-geniex-full
+              test -f sdk/pkg-geniex-full/lib/llama_cpp/libgeniex_plugin.so
+              test -f sdk/pkg-geniex-full/lib/llama_cpp/libggml-hexagon.so
+              test -f sdk/pkg-geniex-full/lib/llama_cpp/libggml-opencl.so
+              test -f sdk/pkg-geniex-full/lib/llama_cpp/libggml-htp-v73.so
+              if find sdk/pkg-geniex-full -name "libgeniex_plugin_qairt.so" | grep -q .; then
                 echo "QAIRT must remain disabled in this GGML Hexagon experiment"
+                exit 1
+              fi
+
+              # Keep the full HTP runtime private for the :npu process.
+              mkdir -p "$GITHUB_WORKSPACE/src/main/assets/npu_runtime/llama_cpp"
+              cp sdk/pkg-geniex-full/lib/llama_cpp/*.so \
+                "$GITHUB_WORKSPACE/src/main/assets/npu_runtime/llama_cpp/"
+
+              # Build the regular UI-process AAR from a filtered copy. The
+              # Hexagon backend and DSP-side skeleton are intentionally absent:
+              # the main process must never discover/load these libraries.
+              cp -a sdk/pkg-geniex-full sdk/pkg-geniex
+              rm -f sdk/pkg-geniex/lib/llama_cpp/libggml-hexagon.so
+              rm -f sdk/pkg-geniex/lib/llama_cpp/libggml-htp-*.so
+              test ! -e sdk/pkg-geniex/lib/llama_cpp/libggml-hexagon.so
+              if find sdk/pkg-geniex/lib/llama_cpp -name "libggml-htp-*.so" | grep -q .; then
+                echo "HTP skeleton leaked into the UI-process AAR staging package"
                 exit 1
               fi
               chown -R "$HOST_UID:$HOST_GID" sdk .ccache
             '
 
-      - name: Stage the Hexagon backend as private worker assets
+      - name: Verify split Hexagon worker assets and UI AAR staging
         run: |
           set -euo pipefail
-          RUNTIME_DIR=src/main/assets/npu_runtime/llama_cpp
-          rm -rf src/main/assets/npu_runtime
-          mkdir -p "$RUNTIME_DIR"
-          cp geniex/sdk/pkg-geniex-hexagon/lib/llama_cpp/*.so "$RUNTIME_DIR/"
-          test -f "$RUNTIME_DIR/libgeniex_plugin.so"
-          test -f "$RUNTIME_DIR/libggml-hexagon.so"
-          find "$RUNTIME_DIR" -maxdepth 1 -type f -name '*.so' -printf '%f\n' | sort
+          test -f src/main/assets/npu_runtime/llama_cpp/libgeniex_plugin.so
+          test -f src/main/assets/npu_runtime/llama_cpp/libggml-hexagon.so
+          test -f src/main/assets/npu_runtime/llama_cpp/libggml-htp-v73.so
+          test -f sdk/pkg-geniex/lib/llama_cpp/libggml-opencl.so
+          if find sdk/pkg-geniex/lib/llama_cpp \
+            \( -name "libggml-hexagon.so" -o -name "libggml-htp-*.so" \) | grep -q .; then
+            echo "Hexagon backend artifacts leaked into the UI AAR staging package"
+            exit 1
+          fi
+
+      - name: Build the app's CPU/OpenCL AAR
+        working-directory: geniex/bindings/android
+        run: ./gradlew --no-daemon clean assembleRelease
+
+      - name: Stage baseline AAR for the app
+        run: |
+          set -euo pipefail
+          mkdir -p libs artifacts
+          cp geniex/bindings/android/app/build/outputs/aar/app-release.aar libs/geniex-android.aar
+          cp libs/geniex-android.aar artifacts/GenieX-Android-CPU-OpenCL.aar
+          unzip -Z1 libs/geniex-android.aar > /tmp/geniex-main-aar.txt
+          grep -q 'jni/arm64-v8a/libgeniex_plugin_llama_cpp.so' /tmp/geniex-main-aar.txt
+          grep -q 'jni/arm64-v8a/libggml-opencl.so' /tmp/geniex-main-aar.txt
+          if grep -Eq 'libggml-hexagon.so|libggml-htp-v[0-9]+.so|libgeniex_plugin_qairt.so' /tmp/geniex-main-aar.txt; then
+            echo "The UI-process AAR must not contain Hexagon/HTP/QAIRT libraries"
+            exit 1
+          fi
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
