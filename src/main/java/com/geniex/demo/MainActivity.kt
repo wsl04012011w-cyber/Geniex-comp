@@ -89,6 +89,8 @@ class MainActivity : FragmentActivity() {
     private lateinit var pbDownloading: ProgressBar
     private lateinit var spModelList: Spinner
     private lateinit var btnDownload: Button
+    private lateinit var btnImportModel: Button
+    private var importedModelFile: File? = null
     private lateinit var btnLoadModel: Button
     private lateinit var btnUnloadModel: Button
     private lateinit var btnStop: Button
@@ -193,6 +195,7 @@ class MainActivity : FragmentActivity() {
                 }
             }
         btnDownload = findViewById(R.id.btn_download)
+        btnImportModel = findViewById(R.id.btn_import_model)
         btnLoadModel = findViewById(R.id.btn_load_model)
         btnUnloadModel = findViewById(R.id.btn_unload_model)
         btnStop = findViewById(R.id.btn_stop)
@@ -337,7 +340,9 @@ class MainActivity : FragmentActivity() {
      * and `qualcomm/<repo>` map to the same on-disk entry) and returns
      * null while the pull is still in `.inflight/`.
      */
-    private suspend fun isModelDownloaded(modelData: ModelData): Boolean = ModelManagerWrapper.getPaths(modelData.modelName) != null
+    private suspend fun isModelDownloaded(modelData: ModelData): Boolean =
+        if (modelData.id.startsWith("imported-")) importedModelFile?.exists() == true
+        else ModelManagerWrapper.getPaths(modelData.modelName) != null
 
     private fun loadModel(
         selectModelData: ModelData,
@@ -349,14 +354,16 @@ class MainActivity : FragmentActivity() {
         modelScope.launch {
             resetLoadState()
             DebugLogCollector.record("LOAD_STAGE resolving model paths for ${selectModelData.id}")
-            val paths = ModelManagerWrapper.getPaths(selectModelData.modelName)
-            if (paths == null) {
+            val importedFile = if (selectModelData.id.startsWith("imported-")) importedModelFile else null
+            val paths = if (importedFile == null) ModelManagerWrapper.getPaths(selectModelData.modelName) else null
+            if (importedFile == null && paths == null) {
                 onLoadModelFailed("model paths unavailable — pull it first")
                 return@launch
             }
-            // Manifest-written runtime_id wins when present; fall back to
-            // the user's UI selection for GGUF models that skip the manifest.
-            val pluginId = paths.runtime_id.ifEmpty { modelDataPluginId }
+            val modelPath = importedFile?.absolutePath ?: paths!!.model_path
+            // GGUF embeds tokenizer metadata; imported files do not need a separate tokenizer file.
+            val tokenizerPath = if (importedFile != null) null else paths!!.tokenizer_path
+            val pluginId = if (importedFile != null) "llama_cpp" else paths!!.runtime_id.ifEmpty { modelDataPluginId }
             val resolvedDeviceId = deviceId
             DebugLogCollector.record("LOAD_STAGE paths resolved runtimeId=$pluginId modelType=${selectModelData.type} device=$resolvedDeviceId")
             when (selectModelData.type) {
@@ -377,7 +384,7 @@ class MainActivity : FragmentActivity() {
                     DebugLogCollector.record("LOAD_STAGE LLM builder start computeUnit=${resolvedDeviceId ?: ComputeUnitValue.CPU.value} config=$conf")
                     if (pluginId == "llama_cpp" && resolvedDeviceId == ComputeUnitValue.NPU.value) {
                         runCatching {
-                            npuWorkerClient.loadModel(paths.model_path, paths.tokenizer_path, conf)
+                            npuWorkerClient.loadModel(modelPath, tokenizerPath, conf)
                         }.onSuccess {
                             DebugLogCollector.record("LOAD_SUCCESS LLM model=${selectModelData.id} worker_process=npu compute_unit=HTP0")
                             isLoadLlmOnNpuWorker = true
@@ -395,8 +402,8 @@ class MainActivity : FragmentActivity() {
                         .builder()
                         .llmCreateInput(
                             LlmCreateInput(
-                                model_path = paths.model_path,
-                                tokenizer_path = paths.tokenizer_path,
+                                model_path = modelPath,
+                                tokenizer_path = tokenizerPath,
                                 config = conf,
                                 runtime_id = pluginId,
                                 compute_unit = resolvedDeviceId ?: ComputeUnitValue.CPU.value,
@@ -426,7 +433,7 @@ class MainActivity : FragmentActivity() {
                     // tokens) but Qwen2.5-VL is 560/14 (1600), so one hardcoded
                     // number mis-sizes every other model in the catalog.
                     vlmVisionConfig =
-                        paths.mmproj_path?.takeIf { it.isNotEmpty() }?.let { GgufVisionReader.read(File(it)) }
+                        paths?.mmproj_path?.takeIf { it.isNotEmpty() }?.let { GgufVisionReader.read(File(it)) }
                     vlmVisionConfig?.let {
                         Log.d(
                             TAG,
@@ -596,10 +603,64 @@ class MainActivity : FragmentActivity() {
             }
     }
 
+    private fun openGgufImporter() {
+        if (hasLoadedModel()) {
+            Toast.makeText(this, "Unload the current model first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        startActivityForResult(intent, REQUEST_IMPORT_GGUF)
+    }
+
+    private fun importGguf(uri: Uri) {
+        modelScope.launch {
+            runCatching {
+                val directory = File(filesDir, "imported_models").apply { mkdirs() }
+                val destination = File(directory, "imported-qwen-${System.currentTimeMillis()}.gguf")
+                contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(destination).use { output -> input.copyTo(output) }
+                } ?: error("Could not open selected file")
+                require(destination.length() > 0L) { "Selected file is empty" }
+                destination
+            }.onSuccess { file ->
+                runOnUiThread {
+                    importedModelFile = file
+                    val data = ModelData(
+                        id = "imported-${file.nameWithoutExtension}",
+                        displayName = "Imported: ${file.name}",
+                        modelName = file.absolutePath,
+                        type = "chat",
+                        runtime = "llama_cpp",
+                        quant = "GGUF",
+                        hub = "AUTO",
+                    )
+                    modelList = modelList.filterNot { it.id == data.id } + data
+                    spModelList.adapter = object : SimpleAdapter(
+                        this@MainActivity,
+                        modelList.map { mapOf("displayName" to it.displayName) },
+                        R.layout.item_model,
+                        arrayOf("displayName"),
+                        intArrayOf(R.id.tv_model_id),
+                    ) {}
+                    spModelList.setSelection(modelList.indexOf(data))
+                    Toast.makeText(this@MainActivity, "GGUF imported: ${file.name}", Toast.LENGTH_LONG).show()
+                    DebugLogCollector.record("MODEL_IMPORTED path=${file.absolutePath} bytes=${file.length()}")
+                }
+            }.onFailure { error ->
+                Log.e(TAG, "GGUF import failed", error)
+                runOnUiThread { Toast.makeText(this@MainActivity, "Import failed: ${error.message}", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+
     private fun setListeners() {
         btnAddImage.setOnClickListener {
             openGallery()
         }
+        btnImportModel.setOnClickListener { openGgufImporter() }
 
         btnClearHistory.setOnClickListener {
             clearHistory()
@@ -1103,6 +1164,11 @@ class MainActivity : FragmentActivity() {
     ) {
         super.onActivityResult(requestCode, resultCode, data)
 
+        if (requestCode == REQUEST_IMPORT_GGUF && resultCode == Activity.RESULT_OK) {
+            data?.data?.let { importGguf(it) }
+            return
+        }
+
         var bitmap: Bitmap? = null
         if (requestCode == 1) {
             if (resultCode == Activity.RESULT_OK && data != null) {
@@ -1337,6 +1403,7 @@ class MainActivity : FragmentActivity() {
     }
 
     companion object {
+        private const val REQUEST_IMPORT_GGUF = 2002
         private const val TAG = "GenieXDemo"
 
         /**
