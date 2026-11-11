@@ -117,4 +117,7 @@ build verifies packaging only; on-device inference still needs testing.
 The experimental build also patches the pinned Android `LlmWrapper` stream cleanup:
 a completed token stream no longer destroys the loaded native model handle. The
 worker can therefore serve multiple chat turns; explicit model unload still owns
-native destruction, and cancellation still requests `stopStream`.
+native destruction, and cancellation still requests `stopStream`. The worker
+sets `ADSP_LIBRARY_PATH` / `DSP_LIBRARY_PATH` so FastRPC can find its packaged
+HTP skeleton while keeping the Hexagon and skeleton libraries out of the UI
+process AAR.
