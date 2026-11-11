@@ -176,7 +176,7 @@ jobs:
               test -f sdk/pkg-geniex/lib/llama_cpp/libgeniex_plugin.so
               test -f sdk/pkg-geniex/lib/llama_cpp/libggml-opencl.so
               if find sdk/pkg-geniex/lib/llama_cpp \
-                \\( -name "libggml-hexagon.so" -o -name "libggml-htp-*.so" \\) | grep -q .; then
+                \( -name "libggml-hexagon.so" -o -name "libggml-htp-*.so" \) | grep -q .; then
                 echo "CPU/OpenCL SDK unexpectedly contains Hexagon/HTP libraries"
                 exit 1
               fi
