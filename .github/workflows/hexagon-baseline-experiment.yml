@@ -35,6 +35,27 @@ jobs:
       - name: Initialize llama.cpp submodule
         run: git -C geniex submodule update --init --depth=1 third-party/llama.cpp
 
+      - name: Keep HTP KV cache and RoPE off the Hexagon buffer
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("geniex/sdk/plugins/llama_cpp/src/params.cpp")
+          source = path.read_text()
+          needle = "    cpar.no_perf              = false;"
+          replacement = """    cpar.no_perf              = false;
+
+              // HTP cannot execute every KQV/RoPE view used by llama.cpp's KV cache.
+              // Keep KV cache and RoPE on CPU while supported model layers remain on HTP.
+              if (device == Device::NPU) {
+                  cpar.offload_kqv = false;
+                  GENIEX_LOG_INFO("[Hexagon] offload_kqv=false: KV cache and RoPE stay on CPU");
+              }"""
+          if source.count(needle) != 1:
+              raise SystemExit("Could not locate unique context-parameter insertion point")
+          path.write_text(source.replace(needle, replacement))
+          PY
+
       - name: Keep the LLM session alive between streamed turns
         run: |
           python3 -c 'from pathlib import Path; p=Path("geniex/bindings/android/app/src/main/java/com/geniex/sdk/LlmWrapper.kt"); s=p.read_text(); nl=chr(10); old="        awaitClose {" + nl + "            close()" + nl + "        }"; new="        awaitClose {" + nl + "            if (handle != 0L) runCatching { llm.stopStream(handle) }" + nl + "        }"; assert s.count(old) == 1, "LlmWrapper cleanup block mismatch"; p.write_text(s.replace(old, new))'
@@ -125,20 +146,38 @@ jobs:
                 exit 1
               fi
 
-              # Keep the full HTP runtime private for the :npu process.
+              # The worker gets the complete HTP runtime as private assets.
+              rm -rf "$APP_WORKSPACE/src/main/assets/npu_runtime/llama_cpp"
               mkdir -p "$APP_WORKSPACE/src/main/assets/npu_runtime/llama_cpp"
               cp sdk/pkg-geniex-full/lib/llama_cpp/*.so \
                 "$APP_WORKSPACE/src/main/assets/npu_runtime/llama_cpp/"
 
-              # Build the regular UI-process AAR from a filtered copy. The
-              # Hexagon backend and DSP-side skeleton are intentionally absent:
-              # the main process must never discover/load these libraries.
-              cp -a sdk/pkg-geniex-full sdk/pkg-geniex
-              rm -f sdk/pkg-geniex/lib/llama_cpp/libggml-hexagon.so
-              rm -f sdk/pkg-geniex/lib/llama_cpp/libggml-htp-*.so
-              test ! -e sdk/pkg-geniex/lib/llama_cpp/libggml-hexagon.so
-              if find sdk/pkg-geniex/lib/llama_cpp -name "libggml-htp-*.so" | grep -q .; then
-                echo "HTP skeleton leaked into the UI-process AAR staging package"
+              # Build a second, independent CPU/OpenCL SDK for the main process.
+              # Do not strip Hexagon from the HTP build: its plugin has a DT_NEEDED
+              # dependency on libggml-hexagon.so, so deleting the library makes
+              # CPU/GPU plugin registration fail with dlopen / "plugin not found".
+              cmake -S sdk --preset arm64-android-cpu-release \
+                -B sdk/build-arm64-android-cpu-opencl-baseline \
+                -DGENIEX_VERSION="$GENIEX_VERSION" \
+                -DGENIEX_PLUGIN_LLAMA_CPP=ON \
+                -DGENIEX_PLUGIN_QAIRT=OFF \
+                -DGENIEX_CPU_ONLY=ON \
+                -DGGML_HEXAGON=OFF \
+                -DGGML_OPENCL=ON \
+                -DGGML_OPENMP=OFF \
+                -DGENIEX_BENCHMARK=OFF \
+                -DOpenCL_INCLUDE_DIR="$OPENCL_INCLUDE_DIR" \
+                -DOpenCL_LIBRARY="$OPENCL_LIBRARY" \
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+              cmake --build sdk/build-arm64-android-cpu-opencl-baseline -j "$(nproc)"
+              cmake --install sdk/build-arm64-android-cpu-opencl-baseline --prefix sdk/pkg-geniex
+              test -f sdk/pkg-geniex/lib/llama_cpp/libgeniex_plugin.so
+              test -f sdk/pkg-geniex/lib/llama_cpp/libggml-opencl.so
+              if find sdk/pkg-geniex/lib/llama_cpp \
+                \\( -name "libggml-hexagon.so" -o -name "libggml-htp-*.so" \\) | grep -q .; then
+                echo "CPU/OpenCL SDK unexpectedly contains Hexagon/HTP libraries"
                 exit 1
               fi
               chown -R "$HOST_UID:$HOST_GID" sdk .ccache
@@ -172,6 +211,15 @@ jobs:
           grep -q 'jni/arm64-v8a/libggml-opencl.so' /tmp/geniex-main-aar.txt
           if grep -Eq 'libggml-hexagon.so|libggml-htp-v[0-9]+.so|libgeniex_plugin_qairt.so' /tmp/geniex-main-aar.txt; then
             echo "The UI-process AAR must not contain Hexagon/HTP/QAIRT libraries"
+            exit 1
+          fi
+          # Check ELF dependencies too: a missing backend file can still leave
+          # the plugin with a DT_NEEDED entry that prevents dlopen at startup.
+          unzip -p libs/geniex-android.aar jni/arm64-v8a/libgeniex_plugin_llama_cpp.so > /tmp/geniex-ui-llama-plugin.so
+          "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -d /tmp/geniex-ui-llama-plugin.so > /tmp/geniex-ui-llama-plugin.dynamic
+          if grep -Eq 'libggml-hexagon.so|libggml-htp-' /tmp/geniex-ui-llama-plugin.dynamic; then
+            echo "CPU/OpenCL UI plugin still depends on Hexagon/HTP"
+            cat /tmp/geniex-ui-llama-plugin.dynamic
             exit 1
           fi
 
