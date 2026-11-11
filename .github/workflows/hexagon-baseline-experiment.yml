@@ -1,0 +1,140 @@
+name: Experimental GenieX Hexagon baseline build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-npu-aar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout experimental branch
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Checkout pinned GenieX SDK
+        uses: actions/checkout@v4
+        with:
+          repository: qualcomm/GenieX
+          ref: 071f609995470bdb0e0769ab964754adfaab7e47
+          path: geniex
+          fetch-depth: 1
+          submodules: false
+          persist-credentials: false
+
+      - name: Initialize llama.cpp submodule
+        run: git -C geniex submodule update --init --depth=1 third-party/llama.cpp
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" \
+            "cmake;3.22.1" "ndk;29.0.14206865"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+
+      - name: Build Hexagon backend with baseline ARMv8-A host code
+        shell: bash
+        run: |
+          set -euo pipefail
+          uid="$(id -u)"
+          gid="$(id -g)"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/geniex:/workspace" \
+            -w /workspace \
+            -e GENIEX_VERSION=v0.10.0 \
+            -e HOST_UID="$uid" \
+            -e HOST_GID="$gid" \
+            --platform linux/amd64 \
+            docker.io/qualcomm/geniex-toolchain-android:v0.2.0 \
+            bash -eux -c '
+              git config --global --add safe.directory "*"
+
+              # This intentionally uses the CPU toolchain preset: its Android
+              # host binaries are baseline ARMv8-A, not the ARMv8.7-A flags
+              # from the Snapdragon preset. Hexagon remains independently ON.
+              # This avoids repeating the host-ISA mismatch that can SIGILL
+              # before the HTP backend has even opened a device.
+              OPENCL_SYSROOT="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+              OPENCL_INCLUDE_DIR="$OPENCL_SYSROOT/usr/include"
+              OPENCL_LIBRARY="$OPENCL_SYSROOT/usr/lib/aarch64-linux-android/libOpenCL.so"
+              test -f "$OPENCL_INCLUDE_DIR/CL/cl.h"
+              test -f "$OPENCL_LIBRARY"
+
+              : "${HEXAGON_SDK_ROOT:?Hexagon SDK missing from toolchain image}"
+              : "${HEXAGON_TOOLS_ROOT:?Hexagon tools missing from toolchain image}"
+              test -d "$HEXAGON_SDK_ROOT"
+              test -d "$HEXAGON_TOOLS_ROOT"
+
+              cmake -S sdk --preset arm64-android-cpu-release \
+                -B sdk/build-arm64-android-hexagon-baseline \
+                -DGENIEX_VERSION="$GENIEX_VERSION" \
+                -DGENIEX_PLUGIN_LLAMA_CPP=ON \
+                -DGENIEX_PLUGIN_QAIRT=OFF \
+                -DGENIEX_CPU_ONLY=ON \
+                -DGGML_HEXAGON=ON \
+                -DGGML_OPENCL=ON \
+                -DGGML_OPENMP=OFF \
+                -DGENIEX_BENCHMARK=OFF \
+                -DOpenCL_INCLUDE_DIR="$OPENCL_INCLUDE_DIR" \
+                -DOpenCL_LIBRARY="$OPENCL_LIBRARY" \
+                -DHEXAGON_SDK_ROOT="$HEXAGON_SDK_ROOT" \
+                -DHEXAGON_TOOLS_ROOT="$HEXAGON_TOOLS_ROOT" \
+                -DHEXAGON_HTP_CERT="${HEXAGON_HTP_CERT:-}" \
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+              cmake --build sdk/build-arm64-android-hexagon-baseline -j "$(nproc)"
+              cmake --install sdk/build-arm64-android-hexagon-baseline --prefix sdk/pkg-geniex
+
+              test -f sdk/pkg-geniex/lib/llama_cpp/libgeniex_plugin.so
+              test -f sdk/pkg-geniex/lib/llama_cpp/libggml-hexagon.so
+              test -f sdk/pkg-geniex/lib/llama_cpp/libggml-opencl.so
+              if find sdk/pkg-geniex -name "libgeniex_plugin_qairt.so" | grep -q .; then
+                echo "QAIRT plugin must remain disabled in this first experiment"
+                exit 1
+              fi
+
+              chown -R "$HOST_UID:$HOST_GID" sdk
+            '
+
+      - name: Build experimental Hexagon Android AAR
+        working-directory: geniex/bindings/android
+        run: ./gradlew --no-daemon clean assembleRelease
+
+      - name: Verify and stage experimental AAR
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          AAR=geniex/bindings/android/app/build/outputs/aar/app-release.aar
+          unzip -Z1 "$AAR" > /tmp/geniex-npu-aar-files.txt
+          grep -q 'jni/arm64-v8a/libgeniex_plugin_llama_cpp.so' /tmp/geniex-npu-aar-files.txt
+          grep -q 'jni/arm64-v8a/libggml-hexagon.so' /tmp/geniex-npu-aar-files.txt
+          grep -q 'jni/arm64-v8a/libggml-opencl.so' /tmp/geniex-npu-aar-files.txt
+          if grep -q 'libgeniex_plugin_qairt.so' /tmp/geniex-npu-aar-files.txt; then
+            echo "Unexpected QAIRT plugin in the GGML Hexagon experiment"
+            exit 1
+          fi
+          cp "$AAR" artifacts/GenieX-Android-Hexagon-baseline-experimental.aar
+          sha256sum artifacts/GenieX-Android-Hexagon-baseline-experimental.aar
+
+      - name: Upload experimental AAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: GenieX-Android-Hexagon-baseline-experimental
+          path: artifacts/GenieX-Android-Hexagon-baseline-experimental.aar
+          if-no-files-found: error
+          retention-days: 14
