@@ -112,8 +112,16 @@ class NpuWorkerClient(context: Context) {
 
         override fun onServiceDisconnected(name: ComponentName?) {
             remote = null
-            connectDeferred?.completeExceptionally(IllegalStateException("NPU worker process disconnected"))
+            val failure = IllegalStateException("NPU worker process disconnected")
+            connectDeferred?.completeExceptionally(failure)
             connectDeferred = null
+            pending.values.forEach { it.completeExceptionally(failure) }
+            pending.clear()
+            streams.values.forEach { channel ->
+                channel.trySend(LlmStreamResult.Error(failure))
+                channel.close()
+            }
+            streams.clear()
         }
 
         override fun onBindingDied(name: ComponentName?) {
