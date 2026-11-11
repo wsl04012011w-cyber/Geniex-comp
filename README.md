@@ -112,3 +112,9 @@ device. The first runtime target is the Galaxy A36 / Snapdragon 6 Gen 3
 (Hexagon V73). NPU selection is experimental and limited to text GGUF models.
 CPU and OpenCL remain the default/supported fallback paths. A successful APK
 build verifies packaging only; on-device inference still needs testing.
+
+
+The experimental build also patches the pinned Android `LlmWrapper` stream cleanup:
+a completed token stream no longer destroys the loaded native model handle. The
+worker can therefore serve multiple chat turns; explicit model unload still owns
+native destruction, and cancellation still requests `stopStream`.
