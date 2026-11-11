@@ -60,6 +60,122 @@ jobs:
         run: |
           python3 -c 'from pathlib import Path; p=Path("geniex/bindings/android/app/src/main/java/com/geniex/sdk/LlmWrapper.kt"); s=p.read_text(); nl=chr(10); old="        awaitClose {" + nl + "            close()" + nl + "        }"; new="        awaitClose {" + nl + "            if (handle != 0L) runCatching { llm.stopStream(handle) }" + nl + "        }"; assert s.count(old) == 1, "LlmWrapper cleanup block mismatch"; p.write_text(s.replace(old, new))'
 
+      - name: Make generated UTF-8 safe at the JNI boundary and instrument invalid bytes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path("geniex/bindings/android/app/src/main/cpp")
+          cb = root / "jni_cb.cpp"
+          source = cb.read_text()
+          start = source.index("static jstring utf8_to_jstring(")
+          end = source.index("\nbool jni_cb_emit_token", start)
+          decoder = r'''jstring jni_utf8_to_jstring(JNIEnv* env, const char* str, size_t* invalid_bytes) {
+              std::vector<jchar> u16;
+              const auto* p = reinterpret_cast<const unsigned char*>(str ? str : "");
+              size_t invalid = 0;
+
+              while (*p) {
+                  uint32_t cp = 0;
+                  size_t n = 0;
+                  const unsigned char c = *p;
+                  if (c <= 0x7F) {
+                      cp = c; n = 1;
+                  } else if (c >= 0xC2 && c <= 0xDF) {
+                      cp = c & 0x1F; n = 2;
+                  } else if (c >= 0xE0 && c <= 0xEF) {
+                      cp = c & 0x0F; n = 3;
+                  } else if (c >= 0xF0 && c <= 0xF4) {
+                      cp = c & 0x07; n = 4;
+                  } else {
+                      u16.push_back(static_cast<jchar>(0xFFFD));
+                      ++invalid; ++p; continue;
+                  }
+
+                  bool valid = true;
+                  for (size_t i = 1; i < n; ++i) {
+                      if (p[i] == 0 || (p[i] & 0xC0) != 0x80) {
+                          valid = false;
+                          break;
+                      }
+                      cp = (cp << 6) | (p[i] & 0x3F);
+                  }
+
+                  if (valid) {
+                      valid = !((n == 2 && cp < 0x80) ||
+                                (n == 3 && cp < 0x800) ||
+                                (n == 4 && cp < 0x10000) ||
+                                (cp >= 0xD800 && cp <= 0xDFFF) ||
+                                cp > 0x10FFFF);
+                  }
+
+                  if (!valid) {
+                      u16.push_back(static_cast<jchar>(0xFFFD));
+                      ++invalid;
+                      ++p;
+                      continue;
+                  }
+
+                  p += n;
+                  if (cp <= 0xFFFF) {
+                      u16.push_back(static_cast<jchar>(cp));
+                  } else {
+                      cp -= 0x10000;
+                      u16.push_back(static_cast<jchar>(0xD800 + (cp >> 10)));
+                      u16.push_back(static_cast<jchar>(0xDC00 + (cp & 0x3FF)));
+                  }
+              }
+
+              if (invalid_bytes) *invalid_bytes = invalid;
+              return env->NewString(u16.empty() ? nullptr : u16.data(),
+                                    static_cast<jsize>(u16.size()));
+          }
+          '''
+          cb.write_text(source[:start] + decoder + source[end:])
+          header = root / "jni_cb.h"
+          hs = header.read_text()
+          declaration = "jstring jni_utf8_to_jstring(JNIEnv* env, const char* str, size_t* invalid_bytes = nullptr);"
+          if declaration not in hs:
+              hs = hs.replace("bool jni_cb_emit_token(JavaCallbackCtx* ctx, const char* token_utf8);",
+                              declaration + "\n\nbool jni_cb_emit_token(JavaCallbackCtx* ctx, const char* token_utf8);")
+              header.write_text(hs)
+          cb = root / "jni_cb.cpp"
+          source = cb.read_text().replace("utf8_to_jstring(env, token_utf8)", "jni_utf8_to_jstring(env, token_utf8)")
+          cb.write_text(source)
+          bridge = root / "llm_bridge_jni.cpp"
+          bs = bridge.read_text()
+          old = "jstring   fullText       = env->NewStringUTF(output.full_text);"
+          new = """size_t invalid_utf8_bytes = 0;
+          jstring fullText = jni_utf8_to_jstring(env, output.full_text, &invalid_utf8_bytes);
+          if (invalid_utf8_bytes > 0) {
+              __android_log_print(ANDROID_LOG_WARN, "GenieXSdk",
+                  "[JNI] generated full_text contained %zu invalid UTF-8 byte sequence(s); replaced with U+FFFD",
+                  invalid_utf8_bytes);
+          }
+          if (!fullText || env->ExceptionCheck()) {
+              if (callback) {
+                  jni_cb_dispose(env, &cbCtx);
+                  std::lock_guard<std::mutex> lock(g_stopFlagsMutex);
+                  delete g_stopFlags[h];
+                  g_stopFlags.erase(h);
+              }
+              free(output.full_text);
+              return nullptr;
+          }"""
+          if old in bs:
+              bs = bs.replace(old, new)
+          elif new not in bs:
+              raise SystemExit("Could not find unique fullText NewStringUTF call")
+          bs = bs.replace("formatted = env->NewStringUTF(output.formatted_text);",
+                          "formatted = jni_utf8_to_jstring(env, output.formatted_text);")
+          bridge.write_text(bs)
+          # The JNI logger macros are not guaranteed to be included by this translation unit.
+          if '#include <android/log.h>' not in bs:
+              bs = bridge.read_text().replace('#include <jni.h>', '#include <jni.h>\n#include <android/log.h>')
+              bridge.write_text(bs)
+          print("JNI UTF-8 conversion patch applied")
+          PY
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
