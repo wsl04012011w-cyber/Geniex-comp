@@ -365,12 +365,11 @@ class MainActivity : FragmentActivity() {
                     val isQairt = pluginId == "qairt"
                     val conf =
                         if (isQairt) {
-                            ModelConfig(nCtx = 0, nGpuLayers = 0, enable_thinking = enableThinking)
+                            ModelConfig(nCtx = 0, nGpuLayers = 0)
                         } else {
                             ModelConfig(
                                 nCtx = 1024,
                                 nGpuLayers = nGpuLayers,
-                                enable_thinking = enableThinking,
                             )
                         }
                     DebugLogCollector.record("LOAD_STAGE LLM builder start computeUnit=${resolvedDeviceId ?: ComputeUnitValue.CPU.value} config=$conf")
@@ -378,7 +377,6 @@ class MainActivity : FragmentActivity() {
                         .builder()
                         .llmCreateInput(
                             LlmCreateInput(
-                                model_name = paths.model_name,
                                 model_path = paths.model_path,
                                 tokenizer_path = paths.tokenizer_path,
                                 config = conf,
@@ -416,7 +414,7 @@ class MainActivity : FragmentActivity() {
                     val config =
                         if (isNpuVlm) {
                             // QAIRT rejects non-zero n_ctx / n_gpu_layers for VLM too.
-                            ModelConfig(nCtx = 0, nGpuLayers = 0, nThreads = 8, enable_thinking = enableThinking)
+                            ModelConfig(nCtx = 0, nGpuLayers = 0, nThreads = 8)
                         } else {
                             ModelConfig(
                                 // One image costs tokenCount tokens (576 on
@@ -431,7 +429,6 @@ class MainActivity : FragmentActivity() {
                                 nBatch = 1,
                                 nUBatch = 1,
                                 nGpuLayers = nGpuLayers,
-                                enable_thinking = enableThinking,
                             )
                         }
                     DebugLogCollector.record("LOAD_STAGE VLM builder start computeUnit=${resolvedDeviceId ?: ComputeUnitValue.CPU.value} config=$config")
@@ -439,7 +436,6 @@ class MainActivity : FragmentActivity() {
                         .builder()
                         .vlmCreateInput(
                             VlmCreateInput(
-                                model_name = paths.model_name,
                                 model_path = paths.model_path,
                                 mmproj_path = paths.mmproj_path,
                                 config = config,
@@ -727,7 +723,7 @@ class MainActivity : FragmentActivity() {
                                 vlmWrapper
                                     .generateStreamFlow(
                                         result.formattedText,
-                                        configWithMedia,
+                                         config = configWithMedia,
                                     ).collect { handleResult(sb, it) }
                             }.onFailure {
                                 runOnUiThread {
@@ -752,7 +748,7 @@ class MainActivity : FragmentActivity() {
                                 llmWrapper
                                     .generateStreamFlow(
                                         templateOutput.formattedText,
-                                        GenerationConfigSample().toGenerationConfig(),
+                                         config = GenerationConfigSample().toGenerationConfig(),
                                     ).collect { streamResult ->
                                         handleResult(sb, streamResult)
                                     }
