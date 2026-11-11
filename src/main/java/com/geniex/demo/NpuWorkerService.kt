@@ -140,7 +140,8 @@ class NpuWorkerService : Service() {
         llm = null
 
         val backendRoot = prepareHexagonRuntime()
-        val plugin = File(backendRoot, "llama_cpp/libgeniex_plugin.so")
+        val backendDir = File(backendRoot, "llama_cpp")
+        val plugin = File(backendDir, "libgeniex_plugin.so")
         check(plugin.isFile) { "Hexagon llama_cpp plugin missing: ${plugin.absolutePath}" }
 
         // plugin.cpp reads GENIEX_PLUGIN_PATH in its constructor, then loads
