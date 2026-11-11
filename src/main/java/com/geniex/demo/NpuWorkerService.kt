@@ -129,7 +129,7 @@ class NpuWorkerService : Service() {
         }
     }
 
-    private fun loadModel(
+    private suspend fun loadModel(
         modelPath: String,
         tokenizerPath: String?,
         nCtx: Int,
