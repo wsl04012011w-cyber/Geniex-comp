@@ -43,6 +43,9 @@ class NpuWorkerService : Service() {
     @Volatile
     private var generationJob: Job? = null
 
+    @Volatile
+    private var pluginRegistered = false
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val messenger by lazy {
@@ -150,8 +153,11 @@ class NpuWorkerService : Service() {
             true,
         )
 
-        val registerResult = GenieXSdk.getInstance().registerPlugin(plugin.absolutePath)
-        check(registerResult == 0) { "Hexagon plugin registration failed (rc=$registerResult)" }
+        if (!pluginRegistered) {
+            val registerResult = GenieXSdk.getInstance().registerPlugin(plugin.absolutePath)
+            check(registerResult == 0) { "Hexagon plugin registration failed (rc=$registerResult)" }
+            pluginRegistered = true
+        }
 
         val input = LlmCreateInput(
             model_path = modelPath,
