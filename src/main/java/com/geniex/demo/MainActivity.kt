@@ -242,7 +242,10 @@ class MainActivity : FragmentActivity() {
         try {
             val baseJson = assets.open("model_list.json").bufferedReader().use { it.readText() }
             val json = Json { ignoreUnknownKeys = true }
+            // This APK uses the official CPU-only GenieX AAR. QAIRT/NPU model
+            // bundles are intentionally omitted because that runtime is not shipped.
             modelList = json.decodeFromString<List<ModelData>>(baseJson)
+                .filter { it.runtime == "llama_cpp" }
         } catch (e: Exception) {
             Log.e(TAG, "parseModelList: $e")
         }
@@ -268,7 +271,13 @@ class MainActivity : FragmentActivity() {
                 }
 
                 override fun onFailure(reason: String) {
-                    Log.e(TAG, "GenieXSdk init failed: $reason")
+                    if (reason.contains("libgeniex_plugin_qairt.so") &&
+                        !reason.contains("libgeniex_plugin_llama_cpp.so")
+                    ) {
+                        Log.i(TAG, "CPU-only SDK: optional QAIRT backend is not packaged")
+                    } else {
+                        Log.e(TAG, "GenieXSdk init failed: $reason")
+                    }
                 }
             },
         )
@@ -364,7 +373,7 @@ class MainActivity : FragmentActivity() {
                                 enable_thinking = enableThinking,
                             )
                         }
-                    DebugLogCollector.record("LOAD_STAGE LLM builder start computeUnit=${resolvedDeviceId ?: ComputeUnitValue.NPU.value} config=$conf")
+                    DebugLogCollector.record("LOAD_STAGE LLM builder start computeUnit=${resolvedDeviceId ?: ComputeUnitValue.CPU.value} config=$conf")
                     LlmWrapper
                         .builder()
                         .llmCreateInput(
@@ -374,7 +383,7 @@ class MainActivity : FragmentActivity() {
                                 tokenizer_path = paths.tokenizer_path,
                                 config = conf,
                                 runtime_id = pluginId,
-                                compute_unit = resolvedDeviceId ?: ComputeUnitValue.NPU.value,
+                                compute_unit = resolvedDeviceId ?: ComputeUnitValue.CPU.value,
                             ),
                         ).build()
                         .onSuccess { wrapper ->
@@ -425,7 +434,7 @@ class MainActivity : FragmentActivity() {
                                 enable_thinking = enableThinking,
                             )
                         }
-                    DebugLogCollector.record("LOAD_STAGE VLM builder start computeUnit=${resolvedDeviceId ?: "HTP0"} config=$config")
+                    DebugLogCollector.record("LOAD_STAGE VLM builder start computeUnit=${resolvedDeviceId ?: ComputeUnitValue.CPU.value} config=$config")
                     VlmWrapper
                         .builder()
                         .vlmCreateInput(
@@ -435,7 +444,7 @@ class MainActivity : FragmentActivity() {
                                 mmproj_path = paths.mmproj_path,
                                 config = config,
                                 runtime_id = pluginId,
-                                compute_unit = resolvedDeviceId ?: "HTP0",
+                                compute_unit = resolvedDeviceId ?: ComputeUnitValue.CPU.value,
                             ),
                         ).build()
                         .onSuccess {
